@@ -31,7 +31,10 @@
         .component-paid input { width: auto; margin: 0; }
         .paid-label { display: flex; align-items: center; gap: 8px; font-size: 16px; }
         .paid-label input { width: auto; margin: 0; }
-        .summary-total { font-size: 22px; font-weight: bold; color: #117864; }
+        .summary-total { display: inline-block; min-width: 145px; font-size: 22px; font-weight: bold; color: #117864; }
+        .summary-totals > div { display: grid; grid-template-columns: 190px 1fr; align-items: baseline; gap: 8px; }
+        .clear-tenant-button { width: auto; padding: 9px 12px; background: #fff; color: #a93226; border: 1px solid #d6a09a; }
+        .clear-tenant-button:hover { background: #fdf2f2; }
         .reminder-unpaid { color: #b03a2e; }
         .reminder-promised { color: #1f5aa6; }
         .unpaid-room-link { display: block; width: 100%; padding: 10px 8px; border: 0; border-bottom: 1px solid #d6e7df; border-radius: 4px; background: transparent; color: #37534d; text-align: left; font-size: 15px; font-weight: normal; cursor: pointer; }
@@ -121,7 +124,6 @@
         </div>
         <nav class="main-nav" aria-label="主导航">
             <a class="nav-button" href="#overview" data-page="overview">收款总览</a>
-            <a class="nav-button" href="#rooms" data-page="rooms">房间查询</a>
             <a class="nav-button" href="#ledger" data-page="ledger">每月记账</a>
             <a class="nav-button" href="#customers" data-page="customers">租客信息</a>
         </nav>
@@ -132,32 +134,13 @@
             <div class="section">
                 <h2>📣 本月收款提醒与收入汇总</h2>
                 <p id="summaryPeriod"></p>
-                <div class="room-status">
-                    <div>已录账单应收总额：<span id="expectedIncome" class="summary-total">¥0.00</span></div>
-                    <div>本月已收总收入：<span id="receivedIncome" class="summary-total">¥0.00</span></div>
-                    <div>本月尚欠总额：<span id="outstandingIncome" class="summary-total">¥0.00</span></div>
+                <div class="room-status summary-totals">
+                    <div><span>已录账单应收总额：</span><span id="expectedIncome" class="summary-total">¥0.00</span></div>
+                    <div><span>本月已收总收入：</span><span id="receivedIncome" class="summary-total">¥0.00</span></div>
+                    <div><span>本月尚欠总额：</span><span id="outstandingIncome" class="summary-total">¥0.00</span></div>
                 </div>
                 <h3>未结清账单提醒</h3>
                 <div id="unpaidRentList" class="room-status" aria-live="polite"></div>
-            </div>
-        </section>
-
-        <section class="page" id="page-rooms">
-            <div class="section">
-                <h2>📊 房间状态查询</h2>
-                <label for="viewRoom">查看房间：</label>
-                <select id="viewRoom" onchange="loadRoomStatus()">
-                    <option value="101">101 室</option>
-                    <option value="102">102 室</option>
-                    <option value="201">201 室</option>
-                    <option value="202">202 室</option>
-                    <option value="203">203 室</option>
-                    <option value="204">204 室</option>
-                    <option value="302">302 室</option>
-                    <option value="303">303 室</option>
-                    <option value="304">304 室</option>
-                </select>
-                <div class="room-status" id="statusBox">选择房间查看最新基础资料...</div>
             </div>
         </section>
 
@@ -286,6 +269,7 @@
                 <input type="number" id="payDay" placeholder="例如：10" min="1" max="31">
 
                 <div class="customer-config-actions">
+                    <button type="button" class="clear-tenant-button" onclick="clearCurrentTenant()">清除当前租客资料</button>
                     <button class="save-room-button" onclick="saveRoomConfig()">保存租客信息</button>
                     <button type="button" class="quiet-action-button backup-export-button" onclick="exportData()">导出 Excel 数据备份</button>
                 </div>
@@ -467,46 +451,31 @@
                 : `${room}室的基本资料已成功更新！`;
         alert(resultMessage);
         loadRoomConfigForm();
-        loadRoomStatus();
         syncLedgerRoom();
     }
 
+    function clearCurrentTenant() {
+        const room = document.getElementById('setupRoom').value;
+        const roomKey = LSK.room(room);
+        const roomData = loadStock(roomKey);
+        if (!roomData) {
+            alert(`${room}室目前没有保存的租客资料。`);
+            return;
+        }
+
+        if (!confirm(`确定清除 ${room}室当前租客的姓名、固定房租和交租日吗？该房间已保存的账单、收款记录、水电表读数和备注都会保留。`)) return;
+
+        localStorage.removeItem(roomKey);
+        loadRoomConfigForm();
+        syncLedgerRoom();
+        updateMonthlySummary();
+        alert(`${room}室当前租客资料已清除，历史账单和收款记录已保留。`);
+    }
     function loadRoomConfigForm() {
         const roomData = loadStock(LSK.room(document.getElementById('setupRoom').value));
         document.getElementById('tenantName').value = roomData ? roomData.name : '';
         document.getElementById('baseRent').value = roomData ? roomData.rent : '';
         document.getElementById('payDay').value = roomData ? roomData.day : '';
-    }
-
-    // 读取配置展示出来的函数
-    function loadRoomStatus() {
-        const room = document.getElementById('viewRoom').value;
-        const roomData = loadStock(LSK.room(room));
-        const box = document.getElementById('statusBox');
-        
-        if (roomData) {
-            box.replaceChildren();
-
-            const rows = [
-                ['🏠 房间：', `${room} 室`],
-                ['👤 当前租客：', roomData.name],
-                ['💰 基础房租：', `${roomData.rent} 元/月`],
-                ['📅 固定交租日：', `每月 ${roomData.day} 号`]
-            ];
-
-            rows.forEach(([label, value]) => {
-                const row = document.createElement('div');
-                const strong = document.createElement('strong');
-                strong.textContent = label;
-                row.append(strong, document.createTextNode(value));
-                box.append(row);
-            });
-        } else {
-            box.innerHTML = '⚠️ 该房间目前还没有任何租客基础资料，请在上方设置。';
-        }
-
-        updateMonthlySummary();
-        promptForOverdueRoom(room);
     }
 
     function syncLedgerRoom() {
@@ -2022,7 +1991,7 @@
         const [year, monthNumber] = month.split('-');
         document.getElementById('summaryPeriod').textContent = `统计月份：${year}年${Number(monthNumber)}月`;
 
-        const rooms = Array.from(document.querySelectorAll('#viewRoom option')).map(o => o.value);
+        const rooms = Array.from(document.querySelectorAll('#ledgerRoom option')).map(o => o.value);
         const currentMonth = getCurrentStockMonth();
         const isPastMonth = month < currentMonth;
         const isFutureMonth = month > currentMonth;
@@ -2115,7 +2084,7 @@
 
     // 页面打开时默认加载一次
     function showPage(pageName) {
-        const pageNames = ['overview', 'rooms', 'ledger', 'customers'];
+        const pageNames = ['overview', 'ledger', 'customers'];
         const activePage = pageNames.includes(pageName) ? pageName : 'overview';
 
         document.querySelectorAll('.page').forEach(page => {
@@ -2132,7 +2101,6 @@
         });
 
         if (activePage === 'customers') loadRoomConfigForm();
-        if (activePage === 'rooms') loadRoomStatus();
         if (activePage === 'ledger') syncLedgerRoom();
         if (activePage === 'overview') updateMonthlySummary();
     }
@@ -2145,7 +2113,6 @@
             ? savedMonth
             : getCurrentStockMonth();
         loadRoomConfigForm();
-        loadRoomStatus();
         syncLedgerRoom();
         showPage(window.location.hash.slice(1) || 'overview');
     });
