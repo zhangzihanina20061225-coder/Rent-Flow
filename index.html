@@ -37,11 +37,21 @@
         .clear-tenant-button:hover { background: #fdf2f2; }
         .reminder-unpaid { color: #b03a2e; }
         .reminder-promised { color: #1f5aa6; }
-        .unpaid-room-link { display: block; width: 100%; padding: 10px 8px; border: 0; border-bottom: 1px solid #d6e7df; border-radius: 4px; background: transparent; color: #37534d; text-align: left; font-size: 15px; font-weight: normal; cursor: pointer; }
+        .unpaid-reminder-header, .unpaid-room-link { display: grid; grid-template-columns: minmax(145px, 1.5fr) repeat(4, minmax(82px, 1fr)); gap: 8px; align-items: center; }
+        .unpaid-reminder-header { padding: 6px 8px; color: #333; font-weight: bold; }
+        .unpaid-room-link { width: 100%; padding: 10px 8px; border: 0; border-bottom: 1px solid #d6e7df; border-radius: 4px; background: transparent; color: #333; text-align: left; font-size: 15px; font-weight: normal; cursor: pointer; }
         .unpaid-room-link:hover { background: #f0f8f4; }
-        .unpaid-room-link.reminder-unpaid { color: #b03a2e; }
-        .unpaid-room-link.reminder-promised { color: #1f5aa6; }
-        .unpaid-room-link strong { margin-right: 4px; }
+        .unpaid-room-name { font-weight: bold; }
+        .unpaid-amount { color: #333; }
+        .unpaid-amount.has-balance, .unpaid-deadline.overdue { color: #b03a2e; }
+        .unpaid-deadline { display: flex; flex-direction: column; gap: 2px; }
+        .unpaid-prediction { display: flex; flex-direction: column; gap: 2px; color: #68736d; font-weight: normal; }
+        .unpaid-prediction-delay { color: inherit; font-size: 13px; font-weight: normal; }
+        .unpaid-delayed-label { font-size: 13px; }
+        .ledger-prediction { display: inline; margin-left: 0; color: #68736d; font-size: 14px; font-weight: normal; text-align: left; }
+        @media (max-width: 600px) {
+            .unpaid-reminder-header, .unpaid-room-link { grid-template-columns: minmax(95px, 1.2fr) repeat(4, minmax(60px, 1fr)); gap: 4px; font-size: 12px; }
+        }
         .extension-note { color: #1f5aa6; font-weight: bold; }
         .ledger-period { display: block; }
         .ledger-period-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
@@ -246,18 +256,9 @@
         <section class="page" id="page-customers">
             <div class="section">
                 <h2>🛠️ 租客信息编辑</h2>
-                <label for="setupRoom">选择要编辑的房间：</label>
-                <select id="setupRoom" onchange="loadRoomConfigForm()">
-                    <option value="101">101 室</option>
-                    <option value="102">102 室</option>
-                    <option value="201">201 室</option>
-                    <option value="202">202 室</option>
-                    <option value="203">203 室</option>
-                    <option value="204">204 室</option>
-                    <option value="302">302 室</option>
-                    <option value="303">303 室</option>
-                    <option value="304">304 室</option>
-                </select>
+                <label for="setupRoom">输入或选择房间号：</label>
+                <input type="text" id="setupRoom" list="roomSuggestions" inputmode="numeric" pattern="[0-9]+" placeholder="例如：401" onchange="loadRoomConfigForm()">
+                <datalist id="roomSuggestions"></datalist>
 
                 <label for="tenantName">当前租客姓名：</label>
                 <input type="text" id="tenantName" placeholder="例如：张三（退租时直接改名）">
@@ -272,6 +273,7 @@
                     <button type="button" class="clear-tenant-button" onclick="clearCurrentTenant()">清除当前租客资料</button>
                     <button class="save-room-button" onclick="saveRoomConfig()">保存租客信息</button>
                     <button type="button" class="quiet-action-button backup-export-button" onclick="exportData()">导出 Excel 数据备份</button>
+                    <p class="meter-note">新增或修改内容会保存在当前浏览器。有尚未导出的更新时，关闭网页会提醒；若要下载 Excel，请在提醒中选择“留在此页”，再点此按钮。</p>
                 </div>
                 <label for="backupFile">选择 Excel 或 JSON 备份文件导入</label>
                 <input
@@ -326,6 +328,23 @@
     const LSK = {
         room: r => `room_${r}`,
         ledger: (room, m) => `ledger_${m}_${room}`
+    };
+    const DEFAULT_ROOM_NUMBERS = ['101', '102', '201', '202', '203', '204', '302', '303', '304'];
+    const BACKUP_PENDING_KEY = '__rental_excel_backup_pending';
+    const BACKUP_EXPORTED_KEY = '__rental_excel_backup_exported';
+    const nativeStorageSetItem = Storage.prototype.setItem;
+    const nativeStorageRemoveItem = Storage.prototype.removeItem;
+    Storage.prototype.setItem = function(key, value) {
+        nativeStorageSetItem.call(this, key, value);
+        if (this === localStorage && key !== BACKUP_PENDING_KEY && key !== BACKUP_EXPORTED_KEY) {
+            nativeStorageSetItem.call(this, BACKUP_PENDING_KEY, '1');
+        }
+    };
+    Storage.prototype.removeItem = function(key) {
+        nativeStorageRemoveItem.call(this, key);
+        if (this === localStorage && key !== BACKUP_PENDING_KEY && key !== BACKUP_EXPORTED_KEY) {
+            nativeStorageSetItem.call(this, BACKUP_PENDING_KEY, '1');
+        }
     };
     let pendingBackupImport = null;
     let pendingPaymentSave = null;
@@ -382,13 +401,18 @@
 
     // 保存配置到手机/电脑本地的函数
     function saveRoomConfig() {
-        const room = document.getElementById('setupRoom').value;
+        const room = document.getElementById('setupRoom').value.trim();
         const name = document.getElementById('tenantName').value;
         const rent = document.getElementById('baseRent').value;
         const day = document.getElementById('payDay').value;
         
         const rentNumber = Number(rent);
         const dayNumber = Number(day);
+
+        if (!/^\d+$/.test(room)) {
+            alert('请输入只包含数字的房间号。');
+            return;
+        }
 
         if (!name.trim() || rent === '' || day === '') {
             alert('请把名字、房租和交租日期填完整哦！');
@@ -441,6 +465,7 @@
         const roomData = { name, rent, day };
         // 使用 LocalStorage 永久保存在浏览器里
         localStorage.setItem(LSK.room(room), JSON.stringify(roomData));
+        refreshRoomOptions(room);
         if (recalculateBill) localStorage.setItem(LSK.ledger(room, month), JSON.stringify(existingLedger));
         const [selectedYear, selectedMonthNumber] = month.split('-');
         const selectedMonthLabel = `${selectedYear}年${Number(selectedMonthNumber)}月`;
@@ -471,8 +496,50 @@
         updateMonthlySummary();
         alert(`${room}室当前租客资料已清除，历史账单和收款记录已保留。`);
     }
+    function getKnownRoomNumbers() {
+        const rooms = new Set(DEFAULT_ROOM_NUMBERS);
+        for (let index = 0; index < localStorage.length; index++) {
+            const key = localStorage.key(index) || '';
+            const roomMatch = key.match(/^room_(\d+)$/);
+            const ledgerMatch = key.match(/^ledger_\d{4}-\d{2}_(\d+)$/);
+            const room = roomMatch ? roomMatch[1] : ledgerMatch ? ledgerMatch[1] : null;
+            if (room) rooms.add(room);
+        }
+        return Array.from(rooms).sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+    }
+
+    function refreshRoomOptions(preferredRoom = '') {
+        const rooms = getKnownRoomNumbers();
+        const preferred = String(preferredRoom || '');
+        if (preferred && /^\d+$/.test(preferred) && !rooms.includes(preferred)) {
+            rooms.push(preferred);
+            rooms.sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+        }
+
+        const suggestions = document.getElementById('roomSuggestions');
+        suggestions.replaceChildren(...rooms.map(room => {
+            const option = document.createElement('option');
+            option.value = room;
+            return option;
+        }));
+
+        const roomInput = document.getElementById('setupRoom');
+        if (!roomInput.value && rooms.length) roomInput.value = rooms[0];
+
+        const ledgerSelect = document.getElementById('ledgerRoom');
+        const selectedRoom = preferred || ledgerSelect.value || rooms[0] || '';
+        ledgerSelect.replaceChildren(...rooms.map(room => {
+            const option = document.createElement('option');
+            option.value = room;
+            option.textContent = `${room} 室`;
+            return option;
+        }));
+        if (rooms.includes(selectedRoom)) ledgerSelect.value = selectedRoom;
+    }
+
     function loadRoomConfigForm() {
-        const roomData = loadStock(LSK.room(document.getElementById('setupRoom').value));
+        refreshRoomOptions();
+        const roomData = loadStock(LSK.room(document.getElementById('setupRoom').value.trim()));
         document.getElementById('tenantName').value = roomData ? roomData.name : '';
         document.getElementById('baseRent').value = roomData ? roomData.rent : '';
         document.getElementById('payDay').value = roomData ? roomData.day : '';
@@ -576,11 +643,21 @@
 
         const roomData = loadStock(LSK.room(room));
         const currentMonthDue = roomData ? getMonthlyDueDate(month, roomData.day) : null;
-        document.getElementById('ledgerPayDay').textContent = roomData && roomData.day
+        const payDayRow = document.getElementById('ledgerPayDay');
+        payDayRow.replaceChildren();
+        const payDayText = document.createElement('span');
+        payDayText.textContent = roomData && roomData.day
             ? currentMonthDue.day === Number(roomData.day)
                 ? `固定交租日：每月 ${roomData.day} 号`
                 : `固定交租日：每月 ${roomData.day} 号；本月按 ${currentMonthDue.day} 号截止`
             : '固定交租日：未设置';
+        const predictionText = document.createElement('span');
+        predictionText.className = 'ledger-prediction';
+        const predictionInfo = roomData ? getPredictedPaymentInfo(room, roomData, month) : null;
+        predictionText.textContent = predictionInfo
+            ? `（预计付款日：${predictionInfo.date}，${predictionInfo.daysAfterDue}天后）`
+            : '（预计付款日：记录不足，暂无法估算）';
+        payDayRow.append(payDayText, predictionText);
         const rentBox = document.getElementById('ledgerRent');
         rentBox.textContent = roomData && Number.isFinite(Number(roomData.rent))
             ? `固定房租：${Number(roomData.rent).toFixed(2)} 元/月`
@@ -1794,6 +1871,8 @@
             link.href = url;
             link.download = `青妈包租婆Excel数据备份_${getCurrentStockMonth()}.xlsx`;
             link.click();
+            nativeStorageSetItem.call(localStorage, BACKUP_EXPORTED_KEY, '1');
+            nativeStorageRemoveItem.call(localStorage, BACKUP_PENDING_KEY);
             setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (error) {
             alert(`Excel 数据备份导出失败：${error.message || '请重试'}`);
@@ -2035,12 +2114,11 @@
                     room,
                     name: roomData.name,
                     overdue,
-                    promised: Boolean(promisedDate),
-                    text: hasTotal
-                        ? `已收 ¥${paidAmount.toFixed(2)}，尚欠 ¥${outstanding.toFixed(2)}；${promisedDate ? `本月临时期限：${promisedDate}` : overdue ? '已逾期' : `本月${payDay}号前交租`}`
-                        : promisedDate
-                            ? `尚未录入本月账单；本月临时期限：${promisedDate}`
-                            : `尚未录入本月账单；${overdue ? '已逾期' : '待交'}（本月${payDay}号前）`
+                    hasTotal,
+                    paidAmount,
+                    outstanding,
+                    deadline: promisedDate || dueInfo.date,
+                    predictedPayment: getPredictedPaymentInfo(room, roomData, month)
                 });
             }
         });
@@ -2058,19 +2136,166 @@
             unpaidRentList.textContent = '所有已登记房间的本月账单都已结清。';
             return;
         }
-        unpaidRentList.replaceChildren(...unpaidLedgers.map(item => {
-            const statusClass = item.promised && !item.overdue ? 'reminder-promised' : item.overdue ? 'reminder-unpaid' : '';
+        const header = document.createElement('div');
+        header.className = 'unpaid-reminder-header';
+        ['房间（租客）', '已收', '尚欠', '期限', '预计付款日'].forEach(text => {
+            const cell = document.createElement('span');
+            cell.textContent = text;
+            header.append(cell);
+        });
+        const rows = unpaidLedgers.map(item => {
             const link = document.createElement('button');
             link.type = 'button';
-            link.className = `unpaid-room-link ${statusClass}`.trim();
-            const roomName = document.createElement('strong');
-            roomName.textContent = `${item.room} 室 ${item.name || '未填写租客姓名'}`;
-            const detail = document.createElement('span');
-            detail.textContent = `：${item.text}`;
-            link.append(roomName, detail);
+            link.className = 'unpaid-room-link';
+
+            const roomName = document.createElement('span');
+            roomName.className = 'unpaid-room-name';
+            roomName.textContent = `${item.room} 室（${item.name || '未填写租客姓名'}）`;
+
+            const received = document.createElement('span');
+            received.className = 'unpaid-amount';
+            received.textContent = item.hasTotal ? `¥${item.paidAmount.toFixed(2)}` : '—';
+
+            const owing = document.createElement('span');
+            owing.className = `unpaid-amount${item.outstanding > 0 ? ' has-balance' : ''}`;
+            owing.textContent = item.hasTotal ? `¥${item.outstanding.toFixed(2)}` : '未录账单';
+
+            const deadline = document.createElement('span');
+            deadline.className = `unpaid-deadline${item.overdue ? ' overdue' : ''}`;
+            const deadlineDate = document.createElement('span');
+            deadlineDate.textContent = item.deadline;
+            deadline.append(deadlineDate);
+            if (item.overdue) {
+                const delayedLabel = document.createElement('span');
+                delayedLabel.className = 'unpaid-delayed-label';
+                delayedLabel.textContent = '（已延期）';
+                deadline.append(delayedLabel);
+            }
+
+            const prediction = document.createElement('span');
+            prediction.className = 'unpaid-prediction';
+            const predictionDate = document.createElement('span');
+            const predictionDelay = document.createElement('span');
+            predictionDelay.className = 'unpaid-prediction-delay';
+            if (item.predictedPayment) {
+                predictionDate.textContent = item.predictedPayment.date;
+                predictionDelay.textContent = `（${item.predictedPayment.daysAfterDue}天后）`;
+            } else {
+                predictionDate.textContent = '记录不足';
+                predictionDelay.textContent = '暂无法估算';
+            }
+            prediction.append(predictionDate, predictionDelay);
+            link.append(roomName, received, owing, deadline, prediction);
             link.addEventListener('click', () => openRoomLedger(item.room));
             return link;
-        }));
+        });
+        unpaidRentList.replaceChildren(header, ...rows);
+    }
+
+    function getRoomLedgerMonths(room) {
+        const months = new Set();
+        for (let index = 0; index < localStorage.length; index++) {
+            const key = localStorage.key(index) || '';
+            const match = key.match(/^ledger_(\d{4}-\d{2})_(\d+)$/);
+            if (match && match[2] === String(room) && Number(match[1].slice(5)) >= 1 && Number(match[1].slice(5)) <= 12) {
+                months.add(match[1]);
+            }
+        }
+        return Array.from(months).sort();
+    }
+
+    function getFullSettlementDate(ledger, total) {
+        if (!ledger || !Array.isArray(ledger.paymentRecords)) return '';
+        const records = ledger.paymentRecords;
+        let hasUndatedPayment = false;
+        const datedPayments = [];
+        for (const record of records) {
+            const amount = Number(record.amount);
+            if (!Number.isFinite(amount) || amount <= 0 || record.type === 'adjustment') continue;
+            if (record.type === 'opening' || !/^\d{4}-\d{2}-\d{2}$/.test(record.date || '')) {
+                hasUndatedPayment = true;
+                continue;
+            }
+            datedPayments.push(record);
+        }
+        if (hasUndatedPayment) return '';
+        datedPayments.sort((a, b) => a.date.localeCompare(b.date));
+        let accumulated = 0;
+        for (const record of datedPayments) {
+            accumulated = Math.round((accumulated + Number(record.amount)) * 100) / 100;
+            if (accumulated + 0.005 >= Number(total)) return record.date;
+        }
+        return '';
+    }
+
+    function getDateDifferenceInDays(startDate, endDate) {
+        const start = Date.parse(`${startDate}T00:00:00Z`);
+        const end = Date.parse(`${endDate}T00:00:00Z`);
+        return Number.isFinite(start) && Number.isFinite(end) ? Math.round((end - start) / 86400000) : 0;
+    }
+
+    function addDaysToISODate(isoDate, days) {
+        const [year, month, day] = isoDate.split('-').map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day + days));
+        return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+    }
+
+    function getNextMonth(month) {
+        const [year, monthNumber] = month.split('-').map(Number);
+        const date = new Date(Date.UTC(year, monthNumber, 1));
+        return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+    }
+
+    const CHINA_HOLIDAY_DATES = new Set([
+        '2025-01-01', '2025-01-28', '2025-01-29', '2025-01-30', '2025-01-31', '2025-02-01', '2025-02-02', '2025-02-03', '2025-02-04',
+        '2025-04-04', '2025-04-05', '2025-04-06', '2025-05-01', '2025-05-02', '2025-05-03', '2025-05-04', '2025-05-05',
+        '2025-05-31', '2025-06-01', '2025-06-02', '2025-10-01', '2025-10-02', '2025-10-03', '2025-10-04', '2025-10-05', '2025-10-06', '2025-10-07', '2025-10-08',
+        '2026-01-01', '2026-01-02', '2026-01-03', '2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20', '2026-02-21', '2026-02-22', '2026-02-23',
+        '2026-04-04', '2026-04-05', '2026-04-06', '2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04', '2026-05-05',
+        '2026-06-19', '2026-06-20', '2026-06-21', '2026-09-25', '2026-09-26', '2026-09-27', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07'
+    ]);
+
+    function movePredictionToNextWorkday(date) {
+        let adjustedDate = date;
+        for (let count = 0; count < 14; count++) {
+            const weekday = new Date(`${adjustedDate}T00:00:00Z`).getUTCDay();
+            if (weekday !== 0 && weekday !== 6 && !CHINA_HOLIDAY_DATES.has(adjustedDate)) return adjustedDate;
+            adjustedDate = addDaysToISODate(adjustedDate, 1);
+        }
+        return adjustedDate;
+    }
+
+    function getPredictedPaymentInfo(room, roomData, throughMonth) {
+        const pastMonths = getRoomLedgerMonths(room).filter(month => month <= throughMonth).reverse();
+        const delays = [];
+        for (const month of pastMonths) {
+            const ledger = loadStock(LSK.ledger(room, month));
+            if (!ledger || !Number.isFinite(Number(ledger.total))) continue;
+            const total = Number(ledger.total);
+            if (getPaidAmount(ledger, roomData, total) + 0.005 < total) continue;
+            const paidDate = getFullSettlementDate(ledger, total);
+            if (!paidDate) continue;
+            const dueDate = getMonthlyDueDate(month, roomData.day).date;
+            delays.push(Math.max(0, getDateDifferenceInDays(dueDate, paidDate)));
+            if (delays.length === 3) break;
+        }
+        if (!delays.length) return null;
+
+        let averageDelay;
+        if (delays.length === 1) {
+            averageDelay = delays[0];
+        } else if (delays.length === 2) {
+            averageDelay = (delays[0] + delays[1]) / 2;
+        } else {
+            averageDelay = delays[2] * 0.1 + delays[1] * 0.3 + delays[0] * 0.6;
+        }
+        const delayDays = Math.round(averageDelay);
+        const nextDueDate = getMonthlyDueDate(getNextMonth(throughMonth), roomData.day).date;
+        const predictedDate = movePredictionToNextWorkday(addDaysToISODate(nextDueDate, delayDays));
+        return {
+            date: predictedDate,
+            daysAfterDue: Math.max(0, getDateDifferenceInDays(nextDueDate, predictedDate))
+        };
     }
 
     function openRoomLedger(room) {
@@ -2106,7 +2331,17 @@
     }
 
     window.addEventListener('hashchange', () => showPage(window.location.hash.slice(1)));
+    window.addEventListener('beforeunload', event => {
+        if (localStorage.getItem(BACKUP_PENDING_KEY) !== '1') return;
+        event.preventDefault();
+        event.returnValue = '';
+    });
     window.addEventListener('load', () => {
+        const backupData = collectBackupData();
+        const hasSavedRentalData = Object.keys(backupData).some(key => key.startsWith('room_') || key.startsWith('ledger_'));
+        if (hasSavedRentalData && localStorage.getItem(BACKUP_EXPORTED_KEY) !== '1') {
+            nativeStorageSetItem.call(localStorage, BACKUP_PENDING_KEY, '1');
+        }
         const monthPicker = document.getElementById('stockMonthPicker');
         const savedMonth = localStorage.getItem('selected_stock_month');
         monthPicker.value = savedMonth && /^\d{4}-\d{2}$/.test(savedMonth)
