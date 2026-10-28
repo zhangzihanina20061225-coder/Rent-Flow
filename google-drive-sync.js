@@ -14,7 +14,7 @@
 (() => {
     'use strict';
 
-    const GOOGLE_CLIENT_ID = 'YOUR_CLIENT_ID';
+    const GOOGLE_CLIENT_ID = '51963447636-omne8ibrk4ff6ij11ojcbmusin3sngtp.apps.googleusercontent.com';
     const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
     const BACKUP_FILENAME = 'Rent-Flow-Backup.json';
     const BACKUP_MIME_TYPE = 'application/json';
