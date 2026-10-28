@@ -90,6 +90,8 @@
         .quiet-action-button:hover { background: #f0f8f4; }
         .backup-export-button { color: #23734b; border: 2px solid #65a77f; margin: 0; }
         .backup-export-button:hover { background: #eaf6ee; }
+        .drive-sync-button { width: 100%; margin-top: 4px; background: #117864; }
+        .drive-sync-button:hover { background: #0e6655; }
         .customer-config-actions { display: grid; justify-items: start; gap: 10px; }
         .customer-config-actions .save-room-button { width: 100%; }
         .payment-record-list { display: grid; gap: 8px; margin-top: 10px; }
@@ -273,7 +275,10 @@
                     <button type="button" class="clear-tenant-button" onclick="clearCurrentTenant()">清除当前租客资料</button>
                     <button class="save-room-button" onclick="saveRoomConfig()">保存租客信息</button>
                     <button type="button" class="quiet-action-button backup-export-button" onclick="exportData()">导出 Excel 数据备份</button>
-                    <p class="meter-note">新增或修改内容会保存在当前浏览器。有尚未导出的更新时，关闭网页会提醒；若要下载 Excel，请在提醒中选择“留在此页”，再点此按钮。</p>
+                    <button type="button" class="drive-sync-button" onclick="uploadToGoogleDrive()">🌸 一键同步到 Google 网盘（防手机丢失）</button>
+                    <button type="button" class="quiet-action-button" onclick="loadFromGoogleDrive()">🔄 从网盘恢复历史数据</button>
+                    <p id="driveSyncStatus" class="memo-status" role="status" aria-live="polite"></p>
+                    <p class="meter-note">新增或修改内容会自动保存在当前浏览器。需要跨设备备份时，请点上方 Google 网盘同步；关闭网页前仍会提醒导出 Excel 备份。</p>
                 </div>
                 <label for="backupFile">选择 Excel 或 JSON 备份文件导入</label>
                 <input
@@ -323,6 +328,8 @@
     </dialog>
 </div>
 
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="google-drive-sync.js" defer></script>
 <script>
     // 本地保存 / 读取
     const LSK = {
