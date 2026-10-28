@@ -70,6 +70,9 @@
         .clear-ledger-button { width: auto; margin: 0 auto 10px; padding: 8px 12px; background: white; color: #a93226; border: 1px solid #a93226; font-size: 14px; }
         .clear-ledger-button:hover { background: #fdf2f2; }
         .memo-status { min-height: 20px; color: #117864; font-size: 14px; }
+        .security-note { max-width: 900px; margin: 22px auto 0; padding: 12px 14px; color: #5f706a; background: #f4f8f6; border-radius: 8px; font-size: 13px; line-height: 1.7; }
+        .security-note p { margin: 4px 0; }
+        .security-note a { color: #117864; }
         .memo-image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; margin: 10px 0; }
         .memo-image-item { position: relative; min-width: 0; padding: 6px; border: 1px solid #c7dfd0; border-radius: 8px; background: #fbfefc; }
         .memo-image-preview-button { display: block; width: 100%; padding: 0; background: transparent; }
@@ -291,6 +294,10 @@
             </div>
         </section>
     </main>
+    <footer class="security-note">
+        <p><strong>💡 安全提示：</strong>Google Drive 备份会在本机加密后上传；解密密码不会写入备份文件。请妥善保管密码，忘记后无法恢复。</p>
+        <p>若设备、Google 账号或网站代码被他人控制，仍可能有风险。停止使用时，可在 <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">Google 账号已连接的应用</a>中撤销「青妈包租婆管理系统」的访问权限。撤销权限不会自动删除已有备份；如需删除，请在 Google Drive 手动删除备份文件。</p>
+    </footer>
     <dialog id="paymentCompositionDialog" oncancel="event.preventDefault()">
         <form method="dialog">
             <h2>确认收款内容</h2>

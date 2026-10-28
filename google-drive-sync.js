@@ -14,10 +14,13 @@
 (() => {
     'use strict';
 
-    const GOOGLE_CLIENT_ID = '51963447636-omne8ibrk4ff6ij11ojcbmusin3sngtp.apps.googleusercontent.com';
+    const GOOGLE_CLIENT_ID = 'YOUR_CLIENT_ID';
     const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
     const BACKUP_FILENAME = 'Rent-Flow-Backup.json';
     const BACKUP_MIME_TYPE = 'application/json';
+    const ENCRYPTED_BACKUP_FORMAT = 'rent-flow-encrypted-backup';
+    const BACKUP_FORMAT = 'rent-flow-localstorage-backup';
+    const PBKDF2_ITERATIONS = 600000;
     const DRIVE_API = 'https://www.googleapis.com/drive/v3';
     const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 
@@ -133,6 +136,83 @@
         };
     }
 
+    function bytesToBase64(bytes) {
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+        }
+        return btoa(binary);
+    }
+
+    function base64ToBytes(value) {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        return bytes;
+    }
+
+    async function deriveEncryptionKey(password, salt, usage) {
+        if (!window.crypto?.subtle) {
+            throw new Error('此浏览器不支持安全加密，请使用最新版 Chrome、Edge 或 Safari。');
+        }
+        const passwordKey = await crypto.subtle.importKey(
+            'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']
+        );
+        return crypto.subtle.deriveKey(
+            { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+            passwordKey,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            [usage]
+        );
+    }
+
+    async function encryptBackup(payload, password) {
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const key = await deriveEncryptionKey(password, salt, 'encrypt');
+        const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+        const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+        return {
+            format: ENCRYPTED_BACKUP_FORMAT,
+            version: 1,
+            cipher: 'AES-256-GCM',
+            kdf: 'PBKDF2-SHA-256',
+            iterations: PBKDF2_ITERATIONS,
+            salt: bytesToBase64(salt),
+            iv: bytesToBase64(iv),
+            ciphertext: bytesToBase64(new Uint8Array(ciphertext))
+        };
+    }
+
+    async function decryptBackup(envelope, password) {
+        if (envelope?.format !== ENCRYPTED_BACKUP_FORMAT || envelope.version !== 1 ||
+            envelope.cipher !== 'AES-256-GCM' || envelope.kdf !== 'PBKDF2-SHA-256' ||
+            envelope.iterations !== PBKDF2_ITERATIONS || typeof envelope.salt !== 'string' ||
+            typeof envelope.iv !== 'string' || typeof envelope.ciphertext !== 'string') {
+            throw new Error('不支持的加密备份格式。');
+        }
+        const salt = base64ToBytes(envelope.salt);
+        const iv = base64ToBytes(envelope.iv);
+        const ciphertext = base64ToBytes(envelope.ciphertext);
+        if (salt.length !== 16 || iv.length !== 12 || ciphertext.length < 16) {
+            throw new Error('加密备份内容不完整。');
+        }
+        const key = await deriveEncryptionKey(password, salt, 'decrypt');
+        const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+        return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plaintext));
+    }
+
+    function isValidBackupPayload(payload) {
+        return payload?.format === BACKUP_FORMAT && payload.version === 1 &&
+            Array.isArray(payload.entries) && payload.entries.every(entry =>
+                Array.isArray(entry) && entry.length === 2 &&
+                typeof entry[0] === 'string' &&
+                (typeof entry[1] === 'string' || entry[1] === null)
+            );
+    }
+
     async function findBackupFile() {
         // drive.file 只能列出此应用创建或用户明确交给此应用的文件。
         // 不会扫描用户 Drive 中所有同名文件。
@@ -196,13 +276,35 @@
     }
 
     async function uploadToGoogleDrive() {
-        setStatus('正在连接 Google Drive…');
+        const password = prompt('🔒 请设置您的专属解密密码（忘记此密码将无法恢复数据）：');
+        if (password === null || password.length === 0) {
+            setStatus('已取消同步。');
+            return;
+        }
+        if (password.length < 12) {
+            alert('为加强保护，请设置至少 12 个字符的密码短语。');
+            setStatus('密码长度不足，未上传。', true);
+            return;
+        }
+        const repeatedPassword = prompt('请再次输入专属解密密码以确认：');
+        if (repeatedPassword === null || repeatedPassword.length === 0) {
+            setStatus('已取消同步。');
+            return;
+        }
+        if (password !== repeatedPassword) {
+            alert('两次输入的密码不一致，未上传备份。');
+            setStatus('两次输入的密码不一致，未上传。', true);
+            return;
+        }
+
+        setStatus('正在本地加密并连接 Google Drive…');
         try {
             await getDriveToken();
             const payload = collectLocalStorage();
-            const result = await uploadBackupFile(payload);
+            const encryptedPayload = await encryptBackup(payload, password);
+            const result = await uploadBackupFile(encryptedPayload);
             setStatus(`备份完成：${result.name}（${new Date(result.modifiedTime).toLocaleString()}）`);
-            alert('已将当前浏览器中的全部本地数据备份到 Google Drive。');
+            alert('已将本地加密后的数据备份到 Google Drive。请妥善保管解密密码。');
         } catch (error) {
             console.error(error);
             setStatus(error.message || '备份失败，请检查网络和 Google 设置。', true);
@@ -218,22 +320,57 @@
             if (!file) {
                 throw new Error(`没有找到 ${BACKUP_FILENAME}。请先在原设备点“一键同步到 Google 网盘”。`);
             }
-            if (!confirm('恢复会替换此浏览器里的全部网站数据。建议先在此设备导出一份备份。确定继续吗？')) {
-                setStatus('已取消恢复。');
+            const token = await getDriveToken();
+            const response = await fetch(`${DRIVE_API}/files/${encodeURIComponent(file.id)}?alt=media`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!response.ok) throw new Error(`下载备份失败（${response.status}）。`);
+
+            let downloaded;
+            try {
+                downloaded = JSON.parse(await response.text());
+            } catch (_) {
+                alert('❌ 密码错误或备份损坏，无法恢复数据！');
+                setStatus('备份内容无法读取，当前本地数据未更改。', true);
                 return;
             }
 
-            const payload = await driveRequest(`${DRIVE_API}/files/${encodeURIComponent(file.id)}?alt=media`);
-            if (payload?.format !== 'rent-flow-localstorage-backup' || !Array.isArray(payload.entries)) {
-                throw new Error('备份文件格式不正确，未更改当前数据。');
+            let payload;
+            if (downloaded?.format === ENCRYPTED_BACKUP_FORMAT) {
+                const password = prompt('🔑 请输入您备份时设置的专属解密密码：');
+                if (password === null || password.length === 0) {
+                    setStatus('已取消恢复，当前本地数据未更改。');
+                    return;
+                }
+                try {
+                    payload = await decryptBackup(downloaded, password);
+                } catch (_) {
+                    alert('❌ 密码错误或备份损坏，无法恢复数据！');
+                    setStatus('密码错误或备份损坏，当前本地数据未更改。', true);
+                    return;
+                }
+            } else if (downloaded?.format === BACKUP_FORMAT) {
+                if (!confirm('这是升级加密功能前的旧版明文备份，尚未加密。确定要恢复吗？')) {
+                    setStatus('已取消恢复，当前本地数据未更改。');
+                    return;
+                }
+                payload = downloaded;
+            } else {
+                alert('❌ 密码错误或备份损坏，无法恢复数据！');
+                setStatus('备份格式不正确，当前本地数据未更改。', true);
+                return;
             }
 
-            const validEntries = payload.entries.every(entry =>
-                Array.isArray(entry) && entry.length === 2 &&
-                typeof entry[0] === 'string' &&
-                (typeof entry[1] === 'string' || entry[1] === null)
-            );
-            if (!validEntries) throw new Error('备份内容不完整或格式有误，未更改当前数据。');
+            if (!isValidBackupPayload(payload)) {
+                alert('❌ 密码错误或备份损坏，无法恢复数据！');
+                setStatus('备份数据格式不正确，当前本地数据未更改。', true);
+                return;
+            }
+
+            if (!confirm('恢复会替换此浏览器里的全部网站数据。建议先导出一份 Excel 备份。确定继续吗？')) {
+                setStatus('已取消恢复，当前本地数据未更改。');
+                return;
+            }
 
             // 先留一份内存回滚副本；写入任何项目失败时恢复原有数据。
             const previousEntries = [];
